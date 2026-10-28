@@ -16,7 +16,7 @@ export default guarded(async function (msg) {
   }
 
   const draft = DraftStream.forMessage(msg);
-  await draft.stage('Working on it');
+  await draft.stage('Thinking...');
   await userLog.logIncoming(msg, 'message');
 
   let result;
