@@ -1,13 +1,29 @@
-// handlers/message.js — runs on each `message` update. The file name is the
-// Telegram update type; the platform calls the default export with the matching
-// payload (here, a Message). The full update is available as `ctx.update`.
+import { guarded } from '../lib/errors.js';
+import { Conversation } from '../lib/conversation.js';
+import { UserLog } from '../lib/repositories.js';
+import { Delivery, DraftStream } from '../lib/telegram.js';
 
-import { api } from 'sdk';
+const UNSUPPORTED_REPLY = 'I can only read text messages for now. Send me something in words and I will help.';
 
-export default async function (message, ctx) {
-  // Echo the text back — replace with your own logic.
-  await api.sendMessage({
-    chat_id: message.chat.id,
-    text: `You said: ${message.text ?? '(no text)'}`,
-  });
-}
+export default guarded(async function (msg) {
+  if (msg.chat?.type !== 'private') return; // groups/supergroups not handled yet
+  const startedAt = Date.now();
+  const userLog = new UserLog(msg.from.id);
+
+  if (!msg.text) {
+    await userLog.logIncoming(msg, 'message', { body: false });
+    return Delivery.plain(msg, UNSUPPORTED_REPLY);
+  }
+
+  const draft = new DraftStream({ chatId: msg.chat.id, draftId: msg.message_id });
+  await draft.stage('Thinking...');
+  await userLog.logIncoming(msg, 'message');
+
+  let result;
+  try {
+    result = await new Conversation(userLog, startedAt).respond(msg, draft);
+  } catch (err) {
+    return Delivery.retryPrompt(userLog, msg, err);
+  }
+  return Delivery.deliver(userLog, msg, result);
+});

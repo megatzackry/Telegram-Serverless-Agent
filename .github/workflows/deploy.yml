@@ -1,0 +1,52 @@
+name: Deploy
+on:
+  push:
+    branches: [main, test]
+
+permissions:
+  contents: read
+
+# main -> @notaicatbot, test -> @notaneggbot
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: ${{ github.ref_name }}
+      TGCLOUD_TOKEN: ${{ github.ref_name == 'main' && secrets.TGCLOUD_TOKEN_MAIN || secrets.TGCLOUD_TOKEN_TEST }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+
+      # A self-edit that breaks syntax must fail here, before it replaces the running bot.
+      - name: Syntax check
+        run: |
+          find tgcloud -name '*.js' ! -name env.js | while read -r f; do
+            cp "$f" /tmp/check.mjs
+            node --check /tmp/check.mjs || { echo "Syntax error in $f"; exit 1; }
+          done
+
+      - name: Write env.js
+        env:
+          GH_BOT_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          TAVILY_KEY: ${{ secrets.TAVILY_KEY }}
+        run: |
+          {
+            echo "export const BRANCH = '${BRANCH}';"
+            echo "export const GITHUB_TOKEN = '${GH_BOT_TOKEN}';"
+            echo "export const GEMINI_KEY = '${GEMINI_KEY}';"
+            echo "export const TAVILY_KEY = '${TAVILY_KEY}';"
+          } > tgcloud/lib/env.js
+
+      - name: Deploy modules
+        run: npx tgcloud push --force
+
+      - name: Apply safe schema changes
+        run: npx tgcloud migrate --safe
