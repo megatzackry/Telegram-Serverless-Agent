@@ -23,7 +23,7 @@ export const RETRY = { maxAttempts: 4, baseDelayMs: 1500, maxDelayMs: 15000, dea
 export const MODEL_FAILOVER = { maxAttempts: 4, baseDelayMs: 2000, maxDelayMs: 10000, deadlineMs: 150000 };
 
 export const GITHUB = {
-  repo: 'https://github.com/megatzackry/Telegram-Serverless-Agent',
+  repo: 'megatzackry/Telegram-Serverless-Agent',
   apiBase: 'https://api.github.com',
   readableBranches: ['main', 'test'],
   writableBranches: ['test'], // main only changes through a manual merge

@@ -7,23 +7,35 @@ const clip = (value, max = 300) => {
   return s.length > max ? `${s.slice(0, max)}...` : s;
 };
 
+const when = (d) => (d instanceof Date ? d.toISOString() : d);
+
+// generateContent rows store an array of parts; streamed (Interactions) rows store { text, calls }.
+const summarizeOutput = (output) => {
+  if (Array.isArray(output)) return output.map((p) => p.text ?? (p.functionCall ? `[call ${p.functionCall.name}]` : '')).join(' ');
+  if (output && typeof output === 'object') {
+    const calls = (output.calls ?? []).map((c) => `[call ${c.name}]`).join(' ');
+    return [output.text, calls].filter(Boolean).join(' ');
+  }
+  return '';
+};
+
 // Compact one-row summaries: the raw rows (full prompts, tool schemas) are far too big to read.
 const SOURCES = {
   user_logs: {
     table: userLogs,
-    format: (r) => ({ id: r.id, at: r.createdAt, user: r.userId, role: r.role, event: r.eventType, text: clip(r.text) }),
+    format: (r) => ({ id: r.id, at: when(r.createdAt), user: r.userId, role: r.role, event: r.eventType, text: clip(r.text) }),
   },
   api_logs: {
     table: apiLogs,
     format: (r) => ({
-      id: r.id, at: r.createdAt, model: r.model, status: r.status, ms: r.latencyMs, tokens: r.totalTokens,
-      output: clip((r.responseOutput ?? []).map((p) => p.text ?? (p.functionCall ? `[call ${p.functionCall.name}]` : '')).join(' ')),
+      id: r.id, at: when(r.createdAt), model: r.model, status: r.status, ms: r.latencyMs, tokens: r.totalTokens,
+      output: clip(summarizeOutput(r.responseOutput)),
       error: r.errorDetails ? clip(r.errorDetails) : undefined,
     }),
   },
   error_logs: {
     table: errorLogs,
-    format: (r) => ({ id: r.id, at: r.createdAt, code: r.code, message: clip(r.message), payload: clip(r.payload, 200) }),
+    format: (r) => ({ id: r.id, at: when(r.createdAt), code: r.code, message: clip(r.message), payload: clip(r.payload, 200) }),
   },
 };
 
