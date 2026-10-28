@@ -1,6 +1,6 @@
 import { fetch } from 'sdk';
 import { RETRY } from './config.js';
-import { withRetry } from './utils.js';
+import { ChunkDecoder, withRetry } from './utils.js';
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
@@ -19,9 +19,9 @@ export class HttpClient {
     this.policy = policy;
   }
 
-  async request(url, init = {}) {
+  async request(url, init = {}, { streaming = false } = {}) {
     try {
-      return await withRetry(() => this.attempt(url, init), {
+      return await withRetry(() => this.attempt(url, init, streaming), {
         policy: this.policy, startedAt: this.startedAt, shouldRetry: HttpClient.retryHint,
       });
     } catch (err) {
@@ -31,17 +31,38 @@ export class HttpClient {
   }
 
   postJson(url, body, headers = {}) {
-    return this.request(url, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
-    });
+    return this.request(url, HttpClient.jsonInit(body, headers));
   }
 
-  async attempt(url, init) {
+  // POST and read the response body incrementally. Retries only cover getting the stream open;
+  // once bytes are flowing a failure is the caller's to handle. onText(text) may be async.
+  async postStream(url, body, headers, onText) {
+    const result = await this.request(url, HttpClient.jsonInit(body, headers), { streaming: true });
+    if (result.response) await HttpClient.pipe(result.response, onText);
+    return result;
+  }
+
+  async attempt(url, init, streaming) {
     const res = await fetch(url, init);
+    if (streaming && res.ok) return { ok: true, status: res.status, response: res };
     const raw = await res.text();
     const result = { ok: res.ok, status: res.status, data: HttpClient.parse(raw), raw, retryAfterMs: HttpClient.retryAfterMs(res) };
     if (RETRYABLE_STATUS.has(res.status)) throw new RetryableResponse(result);
     return result;
+  }
+
+  static jsonInit(body, headers = {}) {
+    return { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) };
+  }
+
+  // Falls back to reading the whole body when it cannot be iterated (no live updates, but still works).
+  static async pipe(res, onText) {
+    if (res.body && typeof res.body[Symbol.asyncIterator] === 'function') {
+      const decoder = new ChunkDecoder();
+      for await (const chunk of res.body) await onText(decoder.decode(chunk));
+      return;
+    }
+    await onText(await res.text());
   }
 
   // Network failures (thrown by fetch) are retried with no hint.

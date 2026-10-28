@@ -15,7 +15,7 @@ export default guarded(async function (msg) {
     return Delivery.plain(msg, UNSUPPORTED_REPLY);
   }
 
-  const draft = new DraftStream({ chatId: msg.chat.id, draftId: msg.message_id });
+  const draft = DraftStream.forMessage(msg);
   await draft.stage('Thinking...');
   await userLog.logIncoming(msg, 'message');
 

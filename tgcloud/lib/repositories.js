@@ -59,21 +59,21 @@ export class UserLog {
   }
 }
 
-// Gemini call telemetry. Never throws: logging must not break a reply.
+// Model call telemetry (generateContent and Interactions alike). Never throws: logging must not break a reply.
+// usage is { prompt, candidates, total } token counts.
 export class ApiLogRepo {
-  static async add({ model, payload, response, error, latencyMs }) {
+  static async add({ model, contents, tools, output, usage, error, latencyMs }) {
     try {
-      const usage = response?.usageMetadata ?? {};
       await db.insert(apiLogs).values({
         latencyMs,
         model,
-        contents: payload.contents ?? [],
-        tools: payload.tools ?? [],
+        contents: contents ?? [],
+        tools: tools ?? [],
         status: error ? `ERROR ${error.code ?? ''}`.trim() : 'SUCCESS',
-        responseOutput: response?.candidates?.[0]?.content?.parts ?? null,
-        promptTokens: usage.promptTokenCount ?? null,
-        candidateTokens: usage.candidatesTokenCount ?? null,
-        totalTokens: usage.totalTokenCount ?? null,
+        responseOutput: output ?? null,
+        promptTokens: usage?.prompt ?? null,
+        candidateTokens: usage?.candidates ?? null,
+        totalTokens: usage?.total ?? null,
         errorDetails: error ?? null,
       }).run();
     } catch (e) {

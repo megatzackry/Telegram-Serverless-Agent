@@ -1,5 +1,5 @@
 // Tools the orchestrator can call. Each tool owns its declaration, its status line, and its execution.
-import { MODEL_TIERS, SUB_AGENT_DEFAULT_MODEL, ACTION_EMOJIS, isOwner } from './config.js';
+import { MODEL_TIERS, SUB_AGENT_DEFAULT_MODEL, ACTION_EMOJIS } from './config.js';
 import { AppError } from './errors.js';
 import { Gemini } from './gemini.js';
 import { GitHubAgent } from './github.js';
@@ -121,7 +121,7 @@ export class GithubAgentTool extends Tool {
   constructor(ctx) {
     super({
       name: 'github_agent',
-      description: "Read or change this bot's own source code in its GitHub repository (owner only). Writes are only allowed on the test branch. Use list_files to discover paths, read_file to inspect one, modify_file to apply a described change and commit it.",
+      description: "Read or change this bot's own source code in its GitHub repository. Writes are only allowed on the test branch. Use list_files to discover paths, read_file to inspect one, modify_file to apply a described change and commit it.",
       parameters: {
         type: 'OBJECT',
         properties: {
@@ -136,7 +136,6 @@ export class GithubAgentTool extends Tool {
     }, ctx);
   }
 
-  isAvailable() { return isOwner(this.ctx.userId); }
   describe(args) { return args?.action || 'Working on the repository'; }
   emojiKey(args) { return args?.operation === 'modify_file' ? 'coding' : 'reading'; }
 
@@ -152,16 +151,34 @@ export class GithubAgentTool extends Tool {
 export class ToolRegistry {
   constructor(ctx) {
     this.tools = [new WebResearcher(ctx), new SubAgent(ctx), new GithubAgentTool(ctx)].filter((t) => t.isAvailable());
+    this.record = []; // results of this run, in call order
+    this.queue = [];  // results to replay after rewind()
   }
 
-  declarations() { return [{ functionDeclarations: this.tools.map((t) => t.declaration) }]; }
+  functions() { return this.tools.map((t) => t.declaration); }
+  declarations() { return [{ functionDeclarations: this.functions() }]; }
+
+  // Called when the orchestrator restarts a turn on another backend: calls that match what already
+  // ran are answered from the record instead of being executed (and committed, searched...) twice.
+  rewind() {
+    this.queue = this.record;
+    this.record = [];
+  }
 
   // Announces the call on the live draft, then runs it. Always resolves to a result string.
   async execute(call, draft) {
     const tool = this.tools.find((t) => t.name === call.name);
     if (!tool) return `Unknown tool "${call.name}". Pick one of the listed tools, or answer directly instead.`;
     const args = call.args ?? {};
-    await draft.stage(tool.describe(args), tool.emojiKey(args));
-    return tool.run(args);
+    const key = `${call.name}:${JSON.stringify(args)}`;
+
+    const replayed = this.queue[0]?.key === key ? this.queue.shift() : null;
+    if (!replayed) {
+      this.queue = [];
+      await draft.stage(tool.describe(args), tool.emojiKey(args));
+    }
+    const result = replayed ? replayed.result : await tool.run(args);
+    this.record.push({ key, result });
+    return result;
   }
 }

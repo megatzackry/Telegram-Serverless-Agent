@@ -5,7 +5,8 @@ import { ApiLogRepo } from './repositories.js';
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-// Gemini REST client. 429/503 backoff lives in HttpClient; this class adds auth, telemetry and error shaping.
+// generateContent client (non-streaming): sub-agents, code edits, and every chat that cannot stream.
+// 429/503 backoff lives in HttpClient; this class adds auth, telemetry and error shaping.
 export class Gemini {
   constructor(model, startedAt = Date.now()) {
     this.model = model;
@@ -18,23 +19,29 @@ export class Gemini {
     const { data, status } = await new HttpClient(this.startedAt).postJson(
       `${ENDPOINT}/${this.model}:generateContent`, payload, { 'x-goog-api-key': apiKey },
     );
-    const latencyMs = Date.now() - t0;
+    const entry = { model: this.model, contents: payload.contents, tools: payload.tools, latencyMs: Date.now() - t0 };
 
     if (!data || data.error) {
       const error = data?.error ?? { code: 'GEMINI_EMPTY', message: `Empty or unparseable response (HTTP ${status})` };
-      await ApiLogRepo.add({ model: this.model, payload, error, latencyMs });
+      await ApiLogRepo.add({ ...entry, error });
       throw new AppError(error.code ?? status, error.message || 'Gemini API error', error);
     }
 
-    await ApiLogRepo.add({ model: this.model, payload, response: data, latencyMs });
+    const usage = data.usageMetadata ?? {};
+    await ApiLogRepo.add({
+      ...entry,
+      output: Gemini.partsOf(data),
+      usage: { prompt: usage.promptTokenCount, candidates: usage.candidatesTokenCount, total: usage.totalTokenCount },
+    });
     return data;
   }
 
-  // Worth trying again (possibly on another model)? Client errors like 400 are not.
+  // Worth trying again (possibly on another model)? Client errors like 400 or 402 are not.
   static isTransient(err) {
     if (!(err instanceof AppError)) return true;
     const code = Number(err.code);
-    return err.code === 'GEMINI_EMPTY' || code === 429 || code >= 500;
+    if (Number.isFinite(code)) return code === 429 || code >= 500;
+    return err.code === 'GEMINI_EMPTY' || /unavailable|exhausted|rate|overload|timeout|internal/i.test(String(err.code));
   }
 
   static partsOf(response) { return response?.candidates?.[0]?.content?.parts ?? []; }

@@ -2,14 +2,15 @@
 
 const INTRO = (date) => `You are the assistant behind a Telegram bot. Today is ${date}. You both decide what a reply needs and write the reply itself -- there is no separate formatting step, so every answer you give must already be valid Telegram Rich Message html.`;
 
-const GITHUB_TOOL = (branch) => `3. "github_agent" (owner only): read or change this bot's own source code in its GitHub repository. This bot is currently running from the "${branch}" branch. Writes are only possible on the "test" branch; to change main, tell the owner to merge test into main. If you don't know a path, use operation "list_files" first, then "read_file" if needed, then "modify_file" with a precise instruction. After a successful commit, say that CI will redeploy the test bot shortly.`;
+const GITHUB_TOOL = (branch) => `3. "github_agent": read or change this bot's own source code in its GitHub repository. This bot is currently running from the "${branch}" branch. Writes are only possible on the "test" branch; to change main, tell the user to merge test into main. If you don't know a path, use operation "list_files" first, then "read_file" if needed, then "modify_file" with a precise instruction. After a successful commit, say that CI will redeploy the test bot shortly.`;
 
-const TOOLS = (isOwner, branch) => `TOOLS
+const TOOLS = (branch) => `TOOLS
 1. "web_researcher": search the web for current prices, news, weather, or other facts you don't already know.
 2. "sub_agent": delegate a sub-task to a specialist, then use what it found to write your own final reply. Call it more than once in the same turn for independent sub-tasks. Agents available:
    - "URL Inspector": the message contains a link and you need its contents.
    - "Custom Agent": any other sub-task worth handing off on its own before you write the final reply (e.g. digesting a long pasted block of text).
-${isOwner ? GITHUB_TOOL(branch) + '\n' : ''}Call no tools at all for a hello, a quick question, or anything you can just answer from what you already know.`;
+${GITHUB_TOOL(branch)}
+Call no tools at all for a hello, a quick question, or anything you can just answer from what you already know.`;
 
 const OUTPUT_RULES = `OUTPUT -- STRICT:
 - "html" must be valid Telegram Rich Message html (Bot API 10.1-10.3). No preamble, no "as an AI" framing, no markdown code fences, no <html>/<body> wrapper.
@@ -107,10 +108,10 @@ const VOICE = `VOICE:
 
 Output the response schema: "html" (the full reply) and "next" (2-4 short, context-aware follow-up prompts for the quick-reply keyboard).`;
 
-export function buildSystemPrompt({ isOwner = false, branch = 'unknown' } = {}) {
+export function buildSystemPrompt({ branch = 'unknown' } = {}) {
   return [
     INTRO(new Date().toDateString()),
-    TOOLS(isOwner, branch),
+    TOOLS(branch),
     OUTPUT_RULES, INLINE_TAGS, LINK_TAGS, BLOCK_TAGS, LIST_TAGS, MEDIA_TAGS, PLAYBOOK, VOICE,
   ].join('\n\n');
 }

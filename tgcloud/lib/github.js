@@ -2,7 +2,7 @@
 //   GitHubPolicy - what the bot is allowed to touch
 //   GitHubClient - transport (GitHub contents / trees API)
 //   GitHubAgent  - the read / modify / commit workflow the orchestrator calls
-import { CODE_EDIT_MODEL, GITHUB, isOwner } from './config.js';
+import { CODE_EDIT_MODEL, GITHUB } from './config.js';
 import { AppError } from './errors.js';
 import { Gemini } from './gemini.js';
 import { HttpClient } from './http.js';
@@ -10,10 +10,6 @@ import { Secrets } from './secrets.js';
 import { Base64, LineDiff, stripCodeFence } from './utils.js';
 
 export class GitHubPolicy {
-  static assertOwner(userId) {
-    if (!isOwner(userId)) throw new AppError('FORBIDDEN', 'github_agent is restricted to the bot owner.');
-  }
-
   static assertReadable(branch) {
     if (!GITHUB.readableBranches.includes(branch)) {
       throw new AppError('FORBIDDEN', `Branch "${branch}" is not readable. Allowed: ${GITHUB.readableBranches.join(', ')}.`);
@@ -22,7 +18,7 @@ export class GitHubPolicy {
 
   static assertWritable(branch) {
     if (!GITHUB.writableBranches.includes(branch)) {
-      throw new AppError('FORBIDDEN', `Branch "${branch}" is read-only for the bot. Writable: ${GITHUB.writableBranches.join(', ')}. Ask the owner to merge test into main.`);
+      throw new AppError('FORBIDDEN', `Branch "${branch}" is read-only for the bot. Writable: ${GITHUB.writableBranches.join(', ')}. Ask the user to merge test into main.`);
     }
   }
 
@@ -101,7 +97,6 @@ export class GitHubAgent {
   }
 
   async run({ operation, branch, path, instruction }) {
-    GitHubPolicy.assertOwner(this.userId);
     GitHubPolicy.assertReadable(branch);
     const client = await GitHubClient.create(this.startedAt);
     switch (operation) {

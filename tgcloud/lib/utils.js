@@ -160,7 +160,7 @@ export class Base64 {
   }
 }
 
-// Cheap line-multiset diff, enough to tell the owner how big a self-edit was.
+// Cheap line-multiset diff, enough to tell the user how big a self-edit was.
 export class LineDiff {
   static summarize(before, after) {
     const remaining = new Map();
@@ -174,5 +174,114 @@ export class LineDiff {
     let removed = 0;
     for (const n of remaining.values()) removed += n;
     return { added, removed };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Streaming helpers
+// ---------------------------------------------------------------------------
+
+// Pulls one string field out of a JSON document that is still being generated, decoding escapes as far
+// as the text has arrived. Used to read the "html" field of the model's structured answer mid-stream.
+const JSON_ESCAPES = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f' };
+
+export class JsonStringField {
+  constructor(key) { this.pattern = new RegExp(`"${key}"\\s*:\\s*"`); }
+
+  extract(buffer) {
+    const start = this.pattern.exec(buffer);
+    if (!start) return { value: '', closed: false };
+    let out = '';
+    let i = start.index + start[0].length;
+    while (i < buffer.length) {
+      const ch = buffer[i];
+      if (ch === '"') return { value: out, closed: true };
+      if (ch !== '\\') { out += ch; i++; continue; }
+      const next = buffer[i + 1];
+      if (next === undefined) break; // lone backslash at the end: wait for more text
+      if (next === 'u') {
+        const hex = buffer.slice(i + 2, i + 6);
+        if (hex.length < 4) break;
+        out += String.fromCharCode(parseInt(hex, 16));
+        i += 6;
+        continue;
+      }
+      out += JSON_ESCAPES[next] ?? next;
+      i += 2;
+    }
+    return { value: out, closed: false };
+  }
+}
+
+// Server-sent events: feed it text as it arrives, get back the JSON payloads of any complete events.
+export class SseParser {
+  constructor() { this.buffer = ''; }
+
+  feed(text) {
+    this.buffer = (this.buffer + text).replace(/\r\n/g, '\n');
+    const events = [];
+    let end;
+    while ((end = this.buffer.indexOf('\n\n')) !== -1) {
+      const block = this.buffer.slice(0, end);
+      this.buffer = this.buffer.slice(end + 2);
+      const data = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n');
+      if (!data || data === '[DONE]') continue;
+      try { events.push(JSON.parse(data)); } catch { /* ignore a malformed event */ }
+    }
+    return events;
+  }
+
+  // The stream can end without a trailing blank line.
+  flush() { return this.feed('\n\n'); }
+}
+
+// Body chunks may arrive as strings or as bytes (and bytes can split a multi-byte character).
+export class ChunkDecoder {
+  constructor() {
+    this.native = typeof TextDecoder === 'function' ? new TextDecoder() : null;
+    this.carry = [];
+  }
+
+  decode(chunk) {
+    if (typeof chunk === 'string') return chunk;
+    if (this.native) return this.native.decode(chunk, { stream: true });
+    const bytes = this.carry.concat(Array.from(chunk));
+    const cut = ChunkDecoder.completeLength(bytes);
+    this.carry = bytes.slice(cut);
+    return Base64.utf8String(bytes.slice(0, cut));
+  }
+
+  // Length of the prefix that does not end in the middle of a UTF-8 sequence.
+  static completeLength(bytes) {
+    for (let back = 1; back <= Math.min(3, bytes.length); back++) {
+      const b = bytes[bytes.length - back];
+      if ((b & 0xc0) === 0x80) continue; // continuation byte: keep looking for the lead byte
+      const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+      return need > back ? bytes.length - back : bytes.length;
+    }
+    return bytes.length;
+  }
+}
+
+// Makes half-written rich html safe to preview: drops a half-typed tag, closes whatever is still open.
+const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'tg-map', 'source']);
+
+export class HtmlBalancer {
+  static balance(html) {
+    const lastOpen = html.lastIndexOf('<');
+    const text = lastOpen > html.lastIndexOf('>') ? html.slice(0, lastOpen) : html;
+    const stack = [];
+    for (const m of text.matchAll(/<(\/)?([a-zA-Z][\w-]*)([^>]*?)(\/)?>/g)) {
+      const [, closing, name, , selfClosing] = m;
+      const tag = name.toLowerCase();
+      if (selfClosing || VOID_TAGS.has(tag)) continue;
+      if (closing) {
+        const at = stack.lastIndexOf(tag);
+        if (at !== -1) stack.length = at;
+      } else {
+        stack.push(tag);
+      }
+    }
+    return text + stack.reverse().map((t) => `</${t}>`).join('');
   }
 }

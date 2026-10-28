@@ -1,7 +1,7 @@
 import { api, BotApiError } from 'sdk';
-import { ACTION_EMOJIS } from './config.js';
+import { ACTION_EMOJIS, DRAFT_PREVIEW_INTERVAL_MS, MAX_DRAFT_FAILURES } from './config.js';
 import { AppError } from './errors.js';
-import { RichText, escapeHtml } from './utils.js';
+import { HtmlBalancer, RichText, escapeHtml } from './utils.js';
 
 export class ActionEmojis {
   // Unknown or unfilled categories fall back to `thinking`.
@@ -16,28 +16,50 @@ export class ActionEmojis {
   }
 }
 
-// The streaming "Thinking..." preview. Re-sends the FULL stage list each time so it reads as a running
-// log. Cosmetic only: failures are swallowed. DraftStream.disabled() is a no-op for edits, guests, retries.
+// The live draft shown while a reply is being produced: a running stage log ("Reading that link"),
+// then the answer itself as it streams in. Cosmetic only: failures are swallowed, and previews stop
+// after repeated failures. DraftStream.disabled() is a no-op.
 export class DraftStream {
   constructor({ chatId, draftId, enabled = true }) {
     Object.assign(this, { chatId, draftId, enabled });
     this.stages = [];
+    this.failures = 0;
+    this.lastPreviewAt = 0;
   }
 
   static disabled() { return new DraftStream({ enabled: false }); }
 
+  // sendRichMessageDraft takes the id of a *private* chat only (Bot API rich-message docs), so groups,
+  // channels and guest queries get no draft and are answered with one finished message instead.
+  static forMessage(msg) {
+    if (msg.chat?.type !== 'private') return DraftStream.disabled();
+    return new DraftStream({ chatId: msg.chat.id, draftId: msg.message_id });
+  }
+
+  // Re-sends the FULL stage list each time so it reads as a running log.
   async stage(text, emojiKey = 'thinking') {
     if (!this.enabled) return;
     this.stages.push(`${ActionEmojis.html(emojiKey)} ${escapeHtml(text)}`);
+    await this.push(`<tg-thinking>${this.stages.join('<br>')}</tg-thinking>`);
+  }
+
+  // The answer so far (rich html, possibly cut mid-tag). Throttled; the finished message replaces it.
+  async preview(html) {
+    if (!this.enabled || this.failures >= MAX_DRAFT_FAILURES) return;
+    const now = Date.now();
+    if (now - this.lastPreviewAt < DRAFT_PREVIEW_INTERVAL_MS) return;
+    this.lastPreviewAt = now;
+    await this.push(HtmlBalancer.balance(html));
+  }
+
+  async push(html) {
     try {
       await api.sendRichMessageDraft({
-        chat_id: this.chatId,
-        draft_id: this.draftId,
-        rich_message: { html: `<tg-thinking>${this.stages.join('<br>')}</tg-thinking>` },
-        can_stop: true,
-        keep_on_stop: false,
+        chat_id: this.chatId, draft_id: this.draftId, rich_message: { html }, can_stop: true, keep_on_stop: false,
       });
+      this.failures = 0;
     } catch (err) {
+      this.failures++;
       console.warn('draft failed:', err?.description ?? err?.message);
     }
   }

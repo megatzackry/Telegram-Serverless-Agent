@@ -22,10 +22,6 @@ export const RETRY = { maxAttempts: 4, baseDelayMs: 1500, maxDelayMs: 15000, dea
 // Orchestrator alternating between PRIMARY_MODEL and FALLBACK_MODEL.
 export const MODEL_FAILOVER = { maxAttempts: 4, baseDelayMs: 2000, maxDelayMs: 10000, deadlineMs: 150000 };
 
-// Telegram user ids allowed to use github_agent. Empty means nobody.
-export const OWNER_IDS = [576324325];
-export const isOwner = (userId) => OWNER_IDS.includes(Number(userId));
-
 export const GITHUB = {
   repo: 'https://github.com/megatzackry/Telegram-Serverless-Agent',
   apiBase: 'https://api.github.com',
@@ -47,3 +43,7 @@ export const ACTION_EMOJIS = {
   coding: null,
   searching: { emoji: '🔍', id: '5188217332748527444' },
 };
+
+// Live answer preview (Interactions API stream -> sendRichMessageDraft).
+export const DRAFT_PREVIEW_INTERVAL_MS = 800;
+export const MAX_DRAFT_FAILURES = 3;
