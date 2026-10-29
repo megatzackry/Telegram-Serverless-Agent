@@ -10,10 +10,12 @@ const clip = (value, max = 300) => {
 const when = (d) => (d instanceof Date ? d.toISOString() : d);
 
 // generateContent rows store an array of parts; streamed (Interactions) rows store { text, calls }.
+const callLabel = (name, args) => `[call ${name} ${clip(args ?? {}, 120)}]`;
+
 const summarizeOutput = (output) => {
-  if (Array.isArray(output)) return output.map((p) => p.text ?? (p.functionCall ? `[call ${p.functionCall.name}]` : '')).join(' ');
+  if (Array.isArray(output)) return output.map((p) => p.text ?? (p.functionCall ? callLabel(p.functionCall.name, p.functionCall.args) : '')).join(' ');
   if (output && typeof output === 'object') {
-    const calls = (output.calls ?? []).map((c) => `[call ${c.name}]`).join(' ');
+    const calls = (output.calls ?? []).map((c) => callLabel(c.name, c.args)).join(' ');
     return [output.text, calls].filter(Boolean).join(' ');
   }
   return '';
@@ -29,7 +31,7 @@ const SOURCES = {
     table: apiLogs,
     format: (r) => ({
       id: r.id, at: when(r.createdAt), model: r.model, status: r.status, ms: r.latencyMs, tokens: r.totalTokens,
-      output: clip(summarizeOutput(r.responseOutput)),
+      output: clip(summarizeOutput(r.responseOutput), 400),
       error: r.errorDetails ? clip(r.errorDetails) : undefined,
     }),
   },
